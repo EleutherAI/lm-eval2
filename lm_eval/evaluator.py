@@ -1,11 +1,15 @@
-import collections
-import itertools
-import numpy as np
+import json
 import random
-import lm_eval.api.metrics
-import lm_eval.models
-import lm_eval.tasks
+import itertools
+import collections
+
+import numpy as np
+
 import lm_eval.api
+import lm_eval.tasks
+import lm_eval.models
+
+import lm_eval.api.metrics
 from lm_eval.utils import positional_deprecated, run_task_tests
 
 
@@ -153,6 +157,8 @@ def evaluate(
         rnd.shuffle(task_docs)
 
 
+        docs_for_decontamination = collections.defaultdict(list)
+
         for doc_id, doc in enumerate(itertools.islice(task_docs, 0, limit)):
 
             if decontaminate and task.should_decontaminate():
@@ -173,6 +179,9 @@ def evaluate(
                 # doc_id: unique id that we can get back to a doc using `docs`
                 requests_origin[req.request_type].append((i, task_name, doc, doc_id))
 
+    # all requests, response, and results
+    all_requests_response_results = collections.defaultdict(dict)
+    
     # all responses for each (task, doc)
     process_res_queue = collections.defaultdict(list)
 
@@ -184,8 +193,14 @@ def evaluate(
         resps = [x for x, req in zip(resps, reqs)]
 
 
-        for resp, (i, task_name, doc, doc_id) in zip(resps, requests_origin[reqtype]):
+        for req, resp, (i, task_name, doc, doc_id) in zip(reqs, resps, requests_origin[reqtype]):
+
             process_res_queue[(task_name, doc_id)].append((i, resp))
+
+            all_requests_response_results[(task_name, doc_id)] = {
+                **{"doc_id": doc_id},
+                **make_arguments_dict(reqtype, req.arguments)
+            }
 
     vals = collections.defaultdict(list)
 
@@ -200,6 +215,11 @@ def evaluate(
         metrics = task.process_results(doc, requests[0])
         for metric, value in metrics.items():
             vals[(task_name, metric)].append(value)
+
+        all_requests_response_results[(task_name, doc_id)] = {
+            **all_requests_response_results[(task_name, doc_id)],
+            **metrics
+        }
 
     # aggregate results ; run bootstrap CIs
     for (task_name, metric), items in vals.items():
@@ -219,7 +239,26 @@ def evaluate(
         if stderr is not None:
             results[task_name][metric + "_stderr"] = stderr(items)
 
+    with open('{}-logs.jsonl'.format(task_name), 'w') as f:
+        for key, value in all_requests_response_results.items():
+            f.writelines(str(value)+"\n")
+
     return {"results": dict(results), "versions": dict(versions)}
+
+
+def make_arguments_dict(reqtype, arguments):
+
+    if reqtype == "loglikelihood":
+        context, targets = arguments
+        return {"context": context, "targets": targets}
+
+    elif reqtype == "loglikelihood_rolling":
+        string, = arguments
+        return {"string": string}
+    
+    elif reqtype == "greedy_until":
+        string, until = arguments
+        return {"string": string, "until": until}
 
 
 def make_table(result_dict):
