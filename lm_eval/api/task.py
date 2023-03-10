@@ -1,9 +1,38 @@
 import abc
+from dataclasses import dataclass
 
 import datasets
+import evaluate
+
+import re
+import random
+
+import numpy as np
 
 from lm_eval.api.instance import LoglikelihoodInstance, RollingLoglikelihoodInstance
+from lm_eval.api.metrics import weighted_perplexity, bits_per_byte, mean
 from lm_eval import utils
+
+
+@dataclass
+class TaskConfig:
+    dataset_path: str = None
+    dataset_name: str = None
+    should_decontaminate: bool = False
+    has_training_docs: bool = None
+    has_validation_docs: bool = None
+    has_test_docs: bool = None
+    training_split: str = None
+    validation_split: str = None
+    test_split: str = None
+    doc_to_text: str = None
+    doc_to_target: str = None
+    aggregation: dict = None
+    higher_is_better: dict = None
+    num_fewshot: int = 0
+    metric_list: str = None
+    gold_alias: str = None
+
 
 class Task(abc.ABC):
     """A task represents an entire benchmark including its dataset, problems,
@@ -22,7 +51,13 @@ class Task(abc.ABC):
     # The name of a subset within `DATASET_PATH`.
     DATASET_NAME: str = None
 
-    def __init__(self, data_dir=None, cache_dir=None, download_mode=None, _config={"num_fewshot": 0}):
+    def __init__(
+        self,
+        data_dir=None,
+        cache_dir=None,
+        download_mode=None,
+        config={"num_fewshot": 0},
+    ):
         """
         :param data_dir: str
             Stores the path to a local folder containing the `Task`'s data files.
@@ -47,10 +82,10 @@ class Task(abc.ABC):
         """
         self.download(data_dir, cache_dir, download_mode)
         self._training_docs = None
-        self._fewshot_docs = None    
+        self._fewshot_docs = None
         self._instances = None
 
-        self._config = _config
+        self._config = config
 
     def download(self, data_dir=None, cache_dir=None, download_mode=None):
         """Downloads and returns the task dataset.
@@ -157,28 +192,33 @@ class Task(abc.ABC):
         pass
 
     def build_all_requests(self):
-        """Build a set of Instances for a task, and store them in task.instances
-        """
+        """Build a set of Instances for a task, and store them in task.instances"""
         if self.has_test_docs():
             docs = self.test_docs()
         elif self.has_validation_docs():
             docs = self.validation_docs()
         else:
-            assert False, f"Task dataset (path={self.DATASET_PATH}, name={self.DATASET_NAME}) must have valid or test docs!"
+            assert (
+                False
+            ), f"Task dataset (path={self.DATASET_PATH}, name={self.DATASET_NAME}) must have valid or test docs!"
 
         instances = []
         for idx, doc in enumerate(docs):
             # sample fewshot context (uses prompt defined in self.doc_to_text())
-            fewshot_ctx = self.fewshot_context(doc, self._config["num_fewshot"], rnd=random.Random())
+            fewshot_ctx = self.fewshot_context(
+                doc, self._config["num_fewshot"], rnd=random.Random()
+            )
 
             # TODO: hardcoded for now: # of runs on each input to be 1. advanced users should have ability to run model multiple times on same input
-            inst = self.construct_requests(doc=doc, ctx=fewshot_ctx, doc_idx=idx, repeats=1)
+            inst = self.construct_requests(
+                doc=doc, ctx=fewshot_ctx, doc_idx=idx, repeats=1
+            )
 
-            # TODO: this means that e.g. the multiple calls for a given doc for multiple choice get added to this list as separate Instances 
+            # TODO: this means that e.g. the multiple calls for a given doc for multiple choice get added to this list as separate Instances
             # (albeit with shared task_index *AND* req_id)
             if isinstance(inst, list):
                 instances.extend(inst)
-            else: 
+            else:
                 instances.append(inst)
 
         self._instances = instances
@@ -196,10 +236,10 @@ class Task(abc.ABC):
             language description, as well as the few shot examples, and the question
             part of the document for `doc`.
         :param doc_idx: int
-            The index of a document within `self.test_docs()` or `self.validation_docs()`, 
+            The index of a document within `self.test_docs()` or `self.validation_docs()`,
             whichever is the main split used.
         :param repeats: int
-            The number of times each instance in a dataset is inferred on. Defaults to 1, 
+            The number of times each instance in a dataset is inferred on. Defaults to 1,
             can be increased for techniques like majority voting.
         """
         pass
@@ -246,9 +286,7 @@ class Task(abc.ABC):
         return ""
 
     @utils.positional_deprecated
-    def fewshot_context(
-        self, doc, num_fewshot, rnd=None
-    ):
+    def fewshot_context(self, doc, num_fewshot, rnd=None):
         """Returns a fewshot context string that is made up of a prepended description
         (if provided), the `num_fewshot` number of examples, and an appended prompt example.
 
@@ -265,7 +303,7 @@ class Task(abc.ABC):
         assert (
             rnd is not None
         ), "A `random.Random` generator argument must be provided to `rnd`"
-        
+
         if num_fewshot == 0:
             labeled_examples = ""
         else:
@@ -299,16 +337,118 @@ class Task(abc.ABC):
         return labeled_examples + example
 
 
+class ConfigurableTask(Task):
+    def __init__(
+        self, data_dir=None, cache_dir=None, download_mode=None, config: dict = None
+    ):
+
+        self._config = TaskConfig(**config)
+        if self._config.dataset_path is not None:
+            self.DATASET_PATH = self._config.dataset_path
+
+        if self._config.dataset_name is not None:
+            self.DATASET_NAME = self._config.dataset_name
+
+        if self._config.metric_list is not None:
+            self._metric_list = {}
+            for metric_name in self._config.metric_list:
+                try:
+                    metric_object = evaluate.load(metric_name)
+                    self._metric_list[metric_name] = metric_object
+                except Exception as ex:
+                    raise Warning(
+                        "{} not found in the evaluate library!".format(metric_name),
+                        "Please check https://huggingface.co/evaluate-metric",
+                    )
+
+        self.download(data_dir, cache_dir, download_mode)
+        self._training_docs = None
+        self._fewshot_docs = None
+
+    def has_training_docs(self):
+        return self._config.has_training_docs
+
+    def has_validation_docs(self):
+        return self._config.has_validation_docs
+
+    def has_test_docs(self):
+        return self._config.has_test_docs
+
+    def training_docs(self):
+        if self._config.training_split is not None:
+            return self.dataset[self._config.training_split]
+
+    def validation_docs(self):
+        if self._config.validation_split is not None:
+            return self.dataset[self._config.validation_split]
+
+    def test_docs(self):
+        if self._config.test_split is not None:
+            return self.dataset[self._config.test_split]
+
+    def _process_doc(self, doc):
+        """
+        Override this to process (detokenize, strip, replace, etc.) individual
+        documents. This can be used in a map over documents of a data split.
+        E.g. `map(self._process_doc, self.dataset["validation"])`
+
+        :return: dict
+            The processed version of the specified `doc`.
+        """
+        return doc
+
+    def doc_to_text(self, doc):
+        return utils.apply_template(self._config.doc_to_text, doc)
+
+    def doc_to_target(self, doc):
+        return utils.apply_template(self._config.doc_to_target, doc)
+
+    def construct_requests(self, doc, ctx, **kwargs):
+
+        return RollingLoglikelihoodInstance(doc=doc, ctx=ctx)
+
+    def process_results(self, doc, results):
+
+        if self._config.gold_alias is not None:
+            gold = doc[self._config.gold_alias]
+        else:
+            gold = self.doc_to_target(doc)
+
+        result_dict = {}
+        for key, result in zip(self._metric_list.keys(), results):
+            result_dict[key] = self._metric_list[key].compute(
+                references=gold,
+                predictions=result,
+            )
+
+        return result_dict
+
+    def aggregation(self):
+
+        aggregation_dict = {}
+        for key in self._metric_list.keys():
+            aggregation_dict[key] = mean
+
+    def higher_is_better(self):
+
+        higher_is_better_dict = {}
+        for key in self._metric_list.keys():
+            higher_is_better_dict[key] = True
+
+
 class MultipleChoiceTask(Task):
     def doc_to_target(self, doc):
         return " " + doc["choices"][doc["gold"]]
 
     def construct_requests(self, doc, ctx):
-        
-        return [LoglikelihoodInstance(doc=doc, arguments=(ctx, " {}".format(choice))) for choice in doc["choices"]]
-        #lls = [
+
+        return [
+            LoglikelihoodInstance(doc=doc, arguments=(ctx, " {}".format(choice)))
+            for choice in doc["choices"]
+        ]
+        # lls = [
         #    rf.loglikelihood(ctx, " {}".format(choice))[0] for choice in doc["choices"]
-        #]
+        # ]
 
         # return lls
 
@@ -389,7 +529,7 @@ class PerplexityTask(Task, abc.ABC):
 
     def construct_requests(self, doc, ctx):
         assert not ctx
-        
+
         return RollingLoglikelihoodInstance(doc=doc, ctx=self.doc_to_target(doc))
         # req = rf.loglikelihood_rolling(self.doc_to_target(doc))
         # return req

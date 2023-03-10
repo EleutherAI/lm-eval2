@@ -302,4 +302,3 @@ class HFLM(LM):
             res.append(s)
 
         return re_ord.get_original(res)
-

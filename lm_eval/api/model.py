@@ -2,6 +2,7 @@ import abc
 
 from lm_eval import utils
 
+
 class LM(abc.ABC):
     def __init__(self):
         """Defines the interface that should be implemented by all LM subclasses.
@@ -9,7 +10,6 @@ class LM(abc.ABC):
         (inputs/outputs should be tokenization-agnostic.)
 
         """
-
 
     @abc.abstractmethod
     def loglikelihood(self, requests):

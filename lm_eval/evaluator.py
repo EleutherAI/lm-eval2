@@ -152,7 +152,6 @@ def evaluate(
         rnd.seed(42)
         rnd.shuffle(task_docs)
 
-
         for doc_id, doc in enumerate(itertools.islice(task_docs, 0, limit)):
 
             if decontaminate and task.should_decontaminate():
@@ -161,9 +160,7 @@ def evaluate(
                 )
 
             docs[(task_name, doc_id)] = doc
-            ctx = task.fewshot_context(
-                doc=doc, num_fewshot=num_fewshot, rnd=rnd
-            )
+            ctx = task.fewshot_context(doc=doc, num_fewshot=num_fewshot, rnd=rnd)
             reqs = task.construct_requests(doc, ctx)
             if not isinstance(reqs, (list, tuple)):
                 reqs = [reqs]
@@ -182,7 +179,6 @@ def evaluate(
         print("Running", reqtype, "requests")
         resps = getattr(lm, reqtype)([req.arguments for req in reqs])
         resps = [x for x, req in zip(resps, reqs)]
-
 
         for resp, (i, task_name, doc, doc_id) in zip(resps, requests_origin[reqtype]):
             process_res_queue[(task_name, doc_id)].append((i, resp))

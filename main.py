@@ -2,8 +2,10 @@ import argparse
 import json
 import logging
 import fnmatch
+import yaml
 
 from lm_eval import tasks, evaluator
+from lm_eval.api.task import ConfigurableTask
 
 logging.getLogger("openai").setLevel(logging.WARNING)
 
@@ -30,6 +32,7 @@ def parse_args():
     parser.add_argument("--model", required=True)
     parser.add_argument("--model_args", default="")
     parser.add_argument("--tasks", default=None, choices=MultiChoice(tasks.ALL_TASKS))
+    parser.add_argument("--config", default=None)
     parser.add_argument("--provide_description", action="store_true")
     parser.add_argument("--num_fewshot", type=int, default=0)
     parser.add_argument("--batch_size", type=int, default=None)
@@ -63,7 +66,14 @@ def main():
         )
 
     if args.tasks is None:
-        task_names = tasks.ALL_TASKS
+        if args.config:
+            task_names = []
+            for config_files in args.config.split(","):
+                with open(config_files, "r") as f:
+                    config = yaml.load(f, yaml.Loader)
+                task_names.append(config)
+        else:
+            task_names = tasks.ALL_TASKS
     else:
         task_names = pattern_match(args.tasks.split(","), tasks.ALL_TASKS)
 

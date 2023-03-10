@@ -7,6 +7,7 @@ from lm_eval import api
 # from . import superglue
 # from . import glue
 from . import arc
+
 # from . import coqa
 # from . import race
 # from . import webqs
@@ -22,6 +23,7 @@ from . import arc
 # from . import sat
 # from . import arithmetic
 from . import lambada
+
 # from . import piqa
 # from . import prost
 # from . import mc_taco
@@ -338,16 +340,33 @@ def get_task_name_from_object(task_object):
     )
 
 
-def get_task_dict(task_name_list: List[Union[str, api.task.Task]]):
+def get_task_name_from_config(task_config):
+    return "configurable_{dataset_path}_{dataset_name}".format(**task_config)
+
+
+def get_task_dict(task_name_list: List[Union[str, dict, api.task.Task]]):
     task_name_dict = {
-        task_name: get_task(task_name)()
+        task_name: get_task(task_name)(
+            config={"num_fewshot": 0}
+        )  # TODO: don't hardcode this and figure out a proper config system
         for task_name in task_name_list
         if isinstance(task_name, str)
+    }
+    task_name_from_config_dict = {
+        get_task_name_from_config(task_config): api.task.ConfigurableTask(
+            config=task_config
+        )
+        for task_config in task_name_list
+        if isinstance(task_config, dict)
     }
     task_name_from_object_dict = {
         get_task_name_from_object(task_object): task_object
         for task_object in task_name_list
-        if not isinstance(task_object, str)
+        if isinstance(task_object, api.task.Task)
     }
     assert set(task_name_dict.keys()).isdisjoint(set(task_name_from_object_dict.keys()))
-    return {**task_name_dict, **task_name_from_object_dict}
+    return {
+        **task_name_dict,
+        **task_name_from_config_dict,
+        **task_name_from_object_dict,
+    }

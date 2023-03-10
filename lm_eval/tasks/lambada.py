@@ -59,8 +59,6 @@ class LambadaBase(Task):
     def construct_requests(self, doc, ctx):
         return LoglikelihoodInstance(doc=doc, arguments=(ctx, self.doc_to_target(doc)))
 
-        return ll, is_greedy
-
     def process_results(self, doc, results):
         ll, is_greedy = results
 

@@ -8,6 +8,7 @@ import sys
 from typing import List
 
 from omegaconf import OmegaConf
+from jinja2 import BaseLoader, Environment
 
 
 class ExitCodeError(Exception):
@@ -201,3 +202,11 @@ def run_task_tests(task_list: List[str]):
         raise ValueError(
             f"Not all tests for the specified tasks ({task_list}) ran successfully! Error code: {pytest_return_val}"
         )
+
+
+env = Environment(loader=BaseLoader)
+
+
+def apply_template(template, doc):
+    rtemplate = env.from_string(template)
+    return rtemplate.render(**doc)

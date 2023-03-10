@@ -1,0 +1,11 @@
+dataset_path: super_glue
+dataset_name: cb
+has_training_docs: true
+has_validation_docs: true
+has_test_docs: true
+training_split: train
+validation_split: validation
+test_split: test
+doc_to_text: "Suppose {{premise}} Can we infer that \"{{hypothesis}}\"? Yes, no, or maybe?"
+doc_to_target: "{% set answer_choices = ['Yes', 'No', 'Maybe'] %}{{answer_choices[label]}}"
+metric_list: [accuracy]
